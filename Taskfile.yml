@@ -1,0 +1,116 @@
+version: '3'
+
+vars:
+  MODULE: github.com/TheLonelyGhost/llm-caveman-convert
+  OUTDIR: out
+  COVER_THRESHOLD: "80"
+
+env:
+  CGO_ENABLED: "0"
+
+tasks:
+  default:
+    desc: "Run lint, vet, and tests"
+    cmds:
+      - task: fmt
+      - task: lint
+      - task: vet
+      - task: test:cover
+      - task: vuln
+
+  tools:install:
+    desc: "Install developer tooling (nilaway, govulncheck)"
+    cmds:
+      - go install go.uber.org/nilaway/cmd/nilaway@latest
+      - go install golang.org/x/vuln/cmd/govulncheck@latest
+
+  build:
+    desc: Build all binaries for all platforms and architectures
+    deps:
+      - build:caveman
+      - build:proxy
+      - build:tokcount
+
+  build:caveman:
+    desc: Build caveman binary for all platforms and architectures
+    cmds:
+      - for: { matrix: { OS: [linux, darwin, windows], ARCH: [amd64, arm64] } }
+        cmd: >-
+          {{if eq .ITEM.OS "windows"}}
+          GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go build -o {{.OUTDIR}}/{{.ITEM.OS}}_{{.ITEM.ARCH}}/caveman.exe ./cmd/caveman
+          {{else}}
+          GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go build -o {{.OUTDIR}}/{{.ITEM.OS}}_{{.ITEM.ARCH}}/caveman ./cmd/caveman
+          {{end}}
+      - cmd: |
+          mkdir -p bin
+          destdir="$(cd {{.OUTDIR}}/{{OS}}_{{ARCH}} && pwd)"
+          ln -fs "${destdir}"/caveman{{exeExt}} ./bin/caveman{{exeExt}}
+
+  build:proxy:
+    desc: Build proxy binary for all platforms and architectures
+    cmds:
+      - for: { matrix: { OS: [linux, darwin, windows], ARCH: [amd64, arm64] } }
+        cmd: >-
+          {{if eq .ITEM.OS "windows"}}
+          GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go build -o {{.OUTDIR}}/{{.ITEM.OS}}_{{.ITEM.ARCH}}/proxy.exe ./cmd/proxy
+          {{else}}
+          GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go build -o {{.OUTDIR}}/{{.ITEM.OS}}_{{.ITEM.ARCH}}/proxy ./cmd/proxy
+          {{end}}
+      - cmd: |
+          mkdir -p bin
+          destdir="$(cd {{.OUTDIR}}/{{OS}}_{{ARCH}} && pwd)"
+          ln -fs "${destdir}"/proxy{{exeExt}} ./bin/proxy{{exeExt}}
+
+  build:tokcount:
+    desc: Build tokcount binary for all platforms and architectures
+    cmds:
+      - for: { matrix: { OS: [linux, darwin, windows], ARCH: [amd64, arm64] } }
+        cmd: >-
+          {{if eq .ITEM.OS "windows"}}
+          GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go build -o {{.OUTDIR}}/{{.ITEM.OS}}_{{.ITEM.ARCH}}/tokcount.exe ./cmd/tokcount
+          {{else}}
+          GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go build -o {{.OUTDIR}}/{{.ITEM.OS}}_{{.ITEM.ARCH}}/tokcount ./cmd/tokcount
+          {{end}}
+      - cmd: |
+          mkdir -p bin
+          destdir="$(cd {{.OUTDIR}}/{{OS}}_{{ARCH}} && pwd)"
+          ln -fs "${destdir}"/tokcount{{exeExt}} ./bin/tokcount{{exeExt}}
+
+  clean:
+    desc: Remove build output directory
+    cmd: rm -rf {{.OUTDIR}}
+
+  test:
+    desc: "Run unit tests with coverage"
+    cmds:
+      - go test -race -covermode=atomic -coverprofile=coverage.out ./...
+      - go tool cover -func=coverage.out | tail -n 1
+
+  test:cover:
+    desc: "Enforce minimum coverage threshold"
+    cmds:
+      - task: test
+      - |
+        pct=$(go tool cover -func=coverage.out | awk '/total:/ {print $3}' | tr -d '%')
+        awk -v p="$pct" -v t="{{.COVER_THRESHOLD}}" 'BEGIN { if (p+0 < t+0) { printf "coverage %s%% < threshold %s%%\n", p, t; exit 1 } else { printf "coverage %s%% >= threshold %s%%\n", p, t } }'
+
+  fmt:
+    desc: "Format Go source"
+    cmds:
+      - gofmt -s -w .
+
+  vet:
+    desc: "Run go vet"
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: "Run golangci-lint"
+    cmds:
+      - golangci-lint run ./...
+      - nilaway ./...
+
+  vuln:
+    desc: "Run govulncheck"
+    cmds:
+      - govulncheck ./...

@@ -1,0 +1,6 @@
+/bin
+/out
+coverage.out
+/.task
+node_modules/
+/examples/
