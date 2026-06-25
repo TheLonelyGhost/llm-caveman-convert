@@ -10,8 +10,8 @@ import (
 
 // Encode compresses input to caveman-speak using the LLM, with caching.
 // Output is validated for structural invariants (headings, code blocks, URLs).
-// The cache is written only when validation passes. Invalid output is returned
-// uncached without issuing additional fix-up requests.
+// If validation fails, a single fix-up call is made. The cache is written only
+// when validation passes. Invalid output is returned uncached.
 func Encode(ctx context.Context, c *cache.Cache, client *llm.Client, input string) (string, error) {
 	if v, ok := c.GetEncode(input); ok {
 		return v, nil
@@ -23,6 +23,16 @@ func Encode(ctx context.Context, c *cache.Cache, client *llm.Client, input strin
 	}
 
 	if result := compress.Validate(input, out); result.IsValid {
+		_ = c.SetEncode(input, out)
+		return out, nil
+	} else {
+		fixed, fixErr := client.Fix(ctx, input, out, result.Errors)
+		if fixErr == nil {
+			out = fixed
+		}
+	}
+
+	if compress.Validate(input, out).IsValid {
 		_ = c.SetEncode(input, out)
 	}
 

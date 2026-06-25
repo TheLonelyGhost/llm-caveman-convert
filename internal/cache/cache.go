@@ -79,8 +79,6 @@ func (s *store) Set(ns namespace, input, output string) error {
 	return s.saveUnlocked()
 }
 
-
-
 func (s *store) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
