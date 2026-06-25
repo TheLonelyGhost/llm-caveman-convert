@@ -18,13 +18,18 @@ const (
 )
 
 type store struct {
-	mu      sync.RWMutex
-	path    string
-	entries map[string]string
+	mu       sync.RWMutex
+	path     string
+	lockPath string
+	entries  map[string]string
 }
 
 func newStore(path string) (*store, error) {
-	s := &store{path: path, entries: make(map[string]string)}
+	s := &store{
+		path:     path,
+		lockPath: path + ".lock",
+		entries:  make(map[string]string),
+	}
 	if err := s.load(); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -38,8 +43,32 @@ func (s *store) key(ns namespace, input string) string {
 
 func (s *store) Get(ns namespace, input string) (string, bool) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	v, ok := s.entries[s.key(ns, input)]
+	k := s.key(ns, input)
+	v, ok := s.entries[k]
+	s.mu.RUnlock()
+
+	if ok {
+		// Fast path: found in memory
+		return v, true
+	}
+
+	// Slow path: not in memory, reload from disk to check for writes from other processes
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Double-check after acquiring write lock (another goroutine may have loaded it)
+	if v, ok := s.entries[k]; ok {
+		return v, true
+	}
+
+	// Reload from disk
+	if err := s.loadUnlocked(); err != nil && !os.IsNotExist(err) {
+		// On error, return miss
+		return "", false
+	}
+
+	// Check again after reload
+	v, ok = s.entries[k]
 	return v, ok
 }
 
@@ -47,10 +76,30 @@ func (s *store) Set(ns namespace, input, output string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.entries[s.key(ns, input)] = output
-	return s.save()
+	return s.saveUnlocked()
 }
 
+
+
 func (s *store) load() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadUnlocked()
+}
+
+func (s *store) loadUnlocked() error {
+	if err := os.MkdirAll(filepath.Dir(s.lockPath), 0o750); err != nil {
+		return err
+	}
+	// Acquire shared lock for reading
+	lockFile, err := s.acquireLock(lockShared)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = s.releaseLock(lockFile)
+	}()
+
 	f, err := os.Open(s.path)
 	if err != nil {
 		return err
@@ -59,7 +108,29 @@ func (s *store) load() error {
 	return json.NewDecoder(f).Decode(&s.entries)
 }
 
-func (s *store) save() error {
+func (s *store) saveUnlocked() error {
+	// Acquire exclusive lock for writing
+	lockFile, err := s.acquireLock(lockExclusive)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = s.releaseLock(lockFile)
+	}()
+
+	// Reload from disk to merge any concurrent writes from other processes
+	diskEntries := make(map[string]string)
+	if f, err := os.Open(s.path); err == nil {
+		_ = json.NewDecoder(f).Decode(&diskEntries)
+		_ = f.Close()
+		// Merge disk entries with our in-memory entries (our entries take precedence)
+		for k, v := range diskEntries {
+			if _, exists := s.entries[k]; !exists {
+				s.entries[k] = v
+			}
+		}
+	}
+
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o750); err != nil {
 		return err
 	}

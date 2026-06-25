@@ -151,6 +151,53 @@ task tools:install
 
 ---
 
+## Benchmarking
+
+A benchmark script is provided to measure caveman compression efficacy across real-world README files from GitHub.
+
+### `benchmark-caveman.py`
+
+Harvests 30 README.md files from popular GitHub repositories, measures token counts before/after compression, tracks compression time, and generates a comprehensive efficacy report.
+
+**Requirements:**
+- Python 3.11+
+- [uv](https://github.com/astral-sh/uv) (for dependency management)
+- Built `caveman` and `tokcount` binaries in `bin/`
+
+**Usage:**
+
+```sh
+# Build the required binaries first
+task build:caveman
+task build:tokcount
+
+# Run the benchmark (optionally set GITHUB_TOKEN to avoid rate limits)
+export GITHUB_TOKEN=your_token_here
+./bin/benchmark-caveman.py
+
+# Run serially (one at a time) instead of in parallel batches
+./bin/benchmark-caveman.py --serial
+```
+
+**Output:**
+
+The script generates `caveman-benchmark-report.md` containing:
+- Aggregate statistics (total tokens saved, average reduction %, average compression time)
+- Efficacy assessment (Excellent/Good/Moderate/Poor based on token reduction)
+- Individual results table for each README
+- Raw JSON data for further analysis
+
+**What it measures:**
+1. Original token count (via `tokcount`)
+2. Compression time (via `caveman --encode`)
+3. Compressed token count (via `tokcount`)
+4. Token savings (absolute and percentage)
+5. Byte compression ratio
+
+The benchmark helps validate the claimed 25-60% token reduction and assess real-world compression performance.
+
+---
+
 ## Configuration
 
 The `caveman` binary and the proxy are configured independently.
